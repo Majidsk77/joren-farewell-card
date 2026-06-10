@@ -162,6 +162,7 @@ export default function ContributeForm({ recipientName }: { recipientName: strin
   const [message, setMsg]         = useState("");
   const [theme, setTheme]         = useState<ThemeKey>("warm");
   const [photoPreviews, setPreviews] = useState<string[]>([]);
+  const [photoWarning, setPhotoWarning] = useState<string | null>(null);
   const [spotifyRaw, setSpotifyRaw]  = useState("");
   const [spotifyEmbed, setEmbed]     = useState<string | null>(null);
   const [spotifyInvalid, setInvalid] = useState(false);
@@ -178,9 +179,26 @@ export default function ContributeForm({ recipientName }: { recipientName: strin
   if (state && "success" in state) return <SuccessView />;
 
   const handlePhotos = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(e.target.files ?? []).slice(0, 5);
+    const ALLOWED = ["image/jpeg", "image/png", "image/webp", "image/gif", "image/heic", "image/heif"];
+    const MAX_MB  = 3.5;
+    const MAX_BYTES = MAX_MB * 1024 * 1024;
+
+    const all      = Array.from(e.target.files ?? []);
+    const accepted = all.filter((f) => ALLOWED.includes(f.type) && f.size <= MAX_BYTES).slice(0, 5);
+    const rejected = all.filter((f) => !ALLOWED.includes(f.type) || f.size > MAX_BYTES);
+
+    if (rejected.length > 0) {
+      const reasons = rejected.map((f) => {
+        if (!ALLOWED.includes(f.type)) return `${f.name} (not an image)`;
+        return `${f.name} (${(f.size / 1024 / 1024).toFixed(1)} MB — max ${MAX_MB} MB)`;
+      });
+      setPhotoWarning(`Skipped: ${reasons.join(", ")}`);
+    } else {
+      setPhotoWarning(null);
+    }
+
     photoPreviews.forEach(URL.revokeObjectURL);
-    setPreviews(files.map((f) => URL.createObjectURL(f)));
+    setPreviews(accepted.map((f) => URL.createObjectURL(f)));
   };
 
   const handleSpotify = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -351,8 +369,22 @@ export default function ContributeForm({ recipientName }: { recipientName: strin
             />
           </label>
 
+          {photoWarning && (
+            <p style={{
+              fontSize: "0.75rem",
+              color: "#b45309",
+              background: "#fffbeb",
+              border: "1px solid #fde68a",
+              borderRadius: 8,
+              padding: "0.5rem 0.75rem",
+              marginTop: "0.75rem",
+            }}>
+              ⚠️ {photoWarning}
+            </p>
+          )}
+
           {photoPreviews.length > 0 && (
-            <div style={{ display: "flex", flexWrap: "wrap", gap: "0.75rem", marginTop: "1rem" }}>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: "0.75rem", marginTop: "0.75rem" }}>
               {photoPreviews.map((src, i) => (
                 <div key={i} style={{
                   width: 72, height: 58,
