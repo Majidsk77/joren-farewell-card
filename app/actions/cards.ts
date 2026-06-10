@@ -10,21 +10,6 @@ export type ActionState =
   | { error: string }
   | null;
 
-// Allowed image MIME types for upload
-const ALLOWED_MIME = new Set([
-  "image/jpeg",
-  "image/png",
-  "image/webp",
-  "image/gif",
-  "image/heic",
-  "image/heif",
-]);
-
-// Strip everything that isn't alphanumeric, dash, underscore, or dot
-function sanitizeFilename(name: string): string {
-  return name.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 80);
-}
-
 // ── Submit a new card (contributor) ──────────────────────────────────────
 
 export async function submitCard(
@@ -37,7 +22,16 @@ export async function submitCard(
     const message      = (formData.get("message")      as string)?.trim();
     const theme        = (formData.get("theme")        as string) || "warm";
     const spotifyRaw   = (formData.get("spotify_url")  as string)?.trim() || null;
-    const photoFiles   = formData.getAll("photos") as File[];
+
+    // Photos are pre-uploaded client-side; we only receive their public URLs.
+    const photoUrlsRaw = (formData.get("photo_urls") as string) || "[]";
+    let photoUrls: string[] = [];
+    try {
+      const parsed = JSON.parse(photoUrlsRaw);
+      if (Array.isArray(parsed)) photoUrls = parsed.filter((u) => typeof u === "string");
+    } catch {
+      console.warn("[submitCard] Could not parse photo_urls:", photoUrlsRaw);
+    }
 
     // ── Field validation ─────────────────────────────────────
     if (!name)                 return { error: "Please enter your name." };
@@ -48,7 +42,6 @@ export async function submitCard(
     // ── Env var guard ────────────────────────────────────────
     const supabaseUrl  = process.env.NEXT_PUBLIC_SUPABASE_URL;
     const supabaseAnon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-    const serviceKey   = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
     if (!supabaseUrl || !supabaseAnon) {
       console.error("[submitCard] Missing Supabase env vars", {
@@ -58,77 +51,7 @@ export async function submitCard(
       return { error: "Server is not configured correctly. Please contact the site owner." };
     }
 
-    // ── Clients ──────────────────────────────────────────────
-    // We use the service-role client for Storage uploads so they are never
-    // blocked by Supabase RLS bucket policies (which deny the anon key by
-    // default). The service-role key never leaves the server.
-    // Card inserts still use the anon client (subject to RLS) so we never
-    // accidentally bypass row-level policies on the cards table.
-    const anonClient  = createAnonClient();
-    const adminClient = serviceKey ? createAdminClient() : anonClient;
-
-    if (!serviceKey) {
-      console.warn("[submitCard] SUPABASE_SERVICE_ROLE_KEY not set — " +
-        "falling back to anon client for storage; uploads may fail if RLS blocks them.");
-    }
-
-    // ── Photo upload ─────────────────────────────────────────
-    // Filter: must be a real file, allowed type, and ≤ 3.5 MB each.
-    // The 3.5 MB per-file cap (with up to 5 files) means the total body
-    // can approach the 4 MB server-action limit configured in next.config.ts.
-    // We keep a conservative per-file cap so a single large photo doesn't
-    // consume the whole budget.
-    const MAX_FILE_BYTES = 3.5 * 1024 * 1024;
-    const photoUrls: string[] = [];
-
-    const validPhotos = photoFiles
-      .filter((f) => f.size > 0)
-      .filter((f) => {
-        if (!ALLOWED_MIME.has(f.type)) {
-          console.warn(`[submitCard] Skipping non-image file: ${f.name} (${f.type})`);
-          return false;
-        }
-        if (f.size > MAX_FILE_BYTES) {
-          console.warn(`[submitCard] Skipping oversized photo: ${f.name} (${(f.size / 1024 / 1024).toFixed(1)} MB)`);
-          return false;
-        }
-        return true;
-      })
-      .slice(0, 5);
-
-    for (const photo of validPhotos) {
-      try {
-        const safe = sanitizeFilename(photo.name);
-        const ext  = safe.split(".").pop()?.toLowerCase() ?? "jpg";
-        const path = `${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
-
-        console.log(`[submitCard] Uploading photo: ${safe} → ${path} (${(photo.size / 1024).toFixed(0)} KB, ${photo.type})`);
-
-        const { data: uploadData, error: uploadError } = await adminClient.storage
-          .from("card-photos")
-          .upload(path, photo, { upsert: false, contentType: photo.type });
-
-        if (uploadError) {
-          // Log the full Supabase StorageError so it appears in Vercel Function logs
-          console.error(`[submitCard] Storage upload failed for "${safe}":`, {
-            message:    uploadError.message,
-            name:       uploadError.name,
-            // StorageError may have a statusCode property
-            statusCode: (uploadError as Record<string, unknown>).statusCode ?? "unknown",
-          });
-          // Continue — skip this photo rather than aborting the whole submission
-        } else if (uploadData) {
-          const { data: { publicUrl } } = adminClient.storage
-            .from("card-photos")
-            .getPublicUrl(uploadData.path);
-          photoUrls.push(publicUrl);
-          console.log(`[submitCard] Upload OK → ${publicUrl}`);
-        }
-      } catch (photoErr) {
-        console.error(`[submitCard] Unexpected error uploading "${photo.name}":`, photoErr);
-        // Skip and continue
-      }
-    }
+    const anonClient = createAnonClient();
 
     // ── Spotify ──────────────────────────────────────────────
     const spotifyEmbed = spotifyRaw ? toSpotifyEmbed(spotifyRaw) : null;
