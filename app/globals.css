@@ -1,26 +1,299 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
+/* ── Font tokens ─────────────────────────────────────────────────────────── */
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --font-body:    var(--font-inter);
+  --font-display: var(--font-playfair);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+/* ── Design tokens ──────────────────────────────────────────────────────── */
+:root {
+  --bg-light:       #f8f7f5;
+  --bg-hero:        #0a1628;
+  --bg-dark:        #0a1628;
+
+  --aurora-violet:  #7c3aed;
+  --aurora-pink:    #db2777;
+  --aurora-blue:    #2563eb;
+  --aurora-indigo:  #4f46e5;
+
+  --text-primary:   #111111;
+  --text-secondary: #555555;
+  --text-muted:     #999999;
+
+  --card-bg:        rgba(255,255,255,0.88);
+  --card-border:    rgba(0,0,0,0.055);
+  --card-shadow:    0 1px 2px rgba(0,0,0,0.04), 0 8px 32px rgba(0,0,0,0.07);
+  --card-radius:    24px;
+}
+
+/* ── Base ────────────────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body {
+  background-color: var(--bg-light);
+  color: var(--text-primary);
+  font-family: var(--font-inter), system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   ANIMATIONS
+════════════════════════════════════════════════════════════════════════════ */
+
+/* Premium hero reveal — opacity + translate + blur (Apple product page style) */
+@keyframes premiumReveal {
+  from {
+    opacity: 0;
+    transform: translateY(18px);
+    filter: blur(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+    filter: blur(0px);
   }
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+/* Aurora orbs — slow, breathing drift (Coldplay nebula feel) */
+@keyframes auraDrift {
+  0%,  100% { transform: translate(0%,  0%)  scale(1.00); opacity: 0.42; }
+  30%        { transform: translate(2%,  3%)  scale(1.07); opacity: 0.52; }
+  60%        { transform: translate(-2%, 1%)  scale(0.97); opacity: 0.38; }
+}
+@keyframes auraDriftAlt {
+  0%,  100% { transform: translate(0%,  0%)  scale(1.00); opacity: 0.38; }
+  40%        { transform: translate(-3%, 2%)  scale(1.09); opacity: 0.48; }
+  70%        { transform: translate(1%,  -2%) scale(0.96); opacity: 0.35; }
+}
+
+/* Gentle float — for the envelope icon */
+@keyframes gentleFloat {
+  0%,  100% { transform: translateY(0px);   }
+  50%        { transform: translateY(-8px);  }
+}
+
+/* Scroll indicator — a line that sweeps down and resets */
+@keyframes scrollSweep {
+  0%   { transform: translateY(-100%); opacity: 0.9; }
+  85%  { transform: translateY(220%);  opacity: 0.6; }
+  86%  { opacity: 0; }
+  100% { transform: translateY(-100%); opacity: 0; }
+}
+
+/* Scroll fade-in for sections (FadeIn component) */
+@keyframes sectionReveal {
+  from { opacity: 0; transform: translateY(32px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ── Animation utility classes ────────────────────────────────────────────── */
+
+/* Hero stagger slots — assign to each hero element */
+.hero-reveal {
+  animation: premiumReveal 1.1s cubic-bezier(0.16, 1, 0.3, 1) both;
+  will-change: transform, opacity, filter;
+}
+.hero-d0 { animation-delay: 0ms; }
+.hero-d1 { animation-delay: 180ms; }
+.hero-d2 { animation-delay: 340ms; }
+.hero-d3 { animation-delay: 460ms; }
+.hero-d4 { animation-delay: 620ms; }
+.hero-d5 { animation-delay: 780ms; }
+.hero-d6 { animation-delay: 980ms; }
+
+.hero-float {
+  animation: gentleFloat 5.5s ease-in-out infinite;
+  will-change: transform;
+}
+
+/* Aurora orbs */
+.aura {
+  position: absolute;
+  border-radius: 50%;
+  pointer-events: none;
+  will-change: transform, opacity;
+}
+.aura-a { animation: auraDrift    12s ease-in-out infinite; }
+.aura-b { animation: auraDriftAlt 15s ease-in-out 3s infinite; }
+.aura-c { animation: auraDrift    10s ease-in-out 6s infinite; }
+.aura-d { animation: auraDriftAlt  9s ease-in-out 1.5s infinite; }
+
+/* Scroll indicator line */
+.scroll-sweep {
+  animation: scrollSweep 2.4s cubic-bezier(0.4, 0, 0.6, 1) 1.8s infinite;
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   SCROLL FADE-IN  (FadeIn component)
+════════════════════════════════════════════════════════════════════════════ */
+.fi-hidden {
+  opacity: 0;
+  transform: translateY(30px);
+  transition:
+    opacity  0.85s cubic-bezier(0.16, 1, 0.3, 1),
+    transform 0.85s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.fi-visible { opacity: 1; transform: translateY(0); }
+
+/* ════════════════════════════════════════════════════════════════════════════
+   GRADIENT TEXT  (hero name)
+════════════════════════════════════════════════════════════════════════════ */
+.gradient-text {
+  background: linear-gradient(105deg, #fff 0%, #fbcfe8 38%, #d8b4fe 72%, #a5b4fc 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  /* Emoji siblings need WebkitTextFillColor reset — handled inline */
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   GLASS CARD
+════════════════════════════════════════════════════════════════════════════ */
+.glass-card {
+  background: var(--card-bg);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid var(--card-border);
+  border-radius: var(--card-radius);
+  box-shadow: var(--card-shadow);
+  transition: box-shadow 0.4s cubic-bezier(0.16,1,0.3,1), transform 0.4s cubic-bezier(0.16,1,0.3,1);
+}
+.glass-card:hover {
+  box-shadow: 0 2px 4px rgba(0,0,0,0.04), 0 20px 48px rgba(0,0,0,0.11);
+  transform: translateY(-5px);
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   PHOTO GRID
+════════════════════════════════════════════════════════════════════════════ */
+.photo-img {
+  width: 100%; height: 100%;
+  object-fit: cover; display: block;
+  border-radius: 12px;
+}
+.photo-placeholder {
+  width: 100%; height: 100%;
+  display: flex; align-items: center; justify-content: center;
+  background: #ede9e3; border-radius: 12px;
+  font-size: 1.5rem; opacity: 0.4;
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   CARD GRID  (editorial 2-column)
+════════════════════════════════════════════════════════════════════════════ */
+.cards-grid { display: grid; grid-template-columns: 1fr; gap: 1.5rem; }
+@media (min-width: 720px) {
+  .cards-grid { grid-template-columns: 1fr 1fr; gap: 1.75rem; }
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   FRIEND CARD — message + photo side-by-side layout
+════════════════════════════════════════════════════════════════════════════ */
+.card-row {
+  display: flex;
+  gap: 1.25rem;
+  align-items: flex-start;
+}
+.card-photo-side {
+  width: 38%;
+  flex-shrink: 0;
+  aspect-ratio: 3 / 4;
+  border-radius: 10px;
+  overflow: hidden;
+  background: #f0ede8;
+}
+
+/* Mobile: stack vertically, photo below message */
+@media (max-width: 520px) {
+  .card-row {
+    flex-direction: column !important;
+  }
+  .card-photo-side {
+    width: 100%;
+    aspect-ratio: 16 / 9;
+  }
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   SPOTIFY BUTTON
+════════════════════════════════════════════════════════════════════════════ */
+.spotify-btn {
+  display: inline-flex; align-items: center; gap: 0.5rem;
+  padding: 0.4rem 1rem; border-radius: 9999px;
+  border: 1.5px solid rgba(0,0,0,0.1);
+  background: transparent;
+  font-family: var(--font-inter), system-ui, sans-serif;
+  font-size: 0.8rem; color: var(--text-secondary);
+  cursor: pointer; letter-spacing: 0.01em;
+  transition: border-color 0.2s, color 0.2s, background 0.2s, transform 0.15s;
+}
+.spotify-btn:hover  { border-color: #1DB954; color: #1DB954; transform: scale(1.02); }
+.spotify-btn:active { transform: scale(0.97); }
+.spotify-btn-on     { background: #1DB954; border-color: #1DB954; color: #fff; }
+.spotify-btn-on:hover { background: #18a348; border-color: #18a348; }
+
+/* ════════════════════════════════════════════════════════════════════════════
+   FORM  (contribute page)
+════════════════════════════════════════════════════════════════════════════ */
+.form-input {
+  width: 100%; padding: 0.75rem 1rem; border-radius: 12px;
+  border: 1.5px solid rgba(0,0,0,0.1);
+  background: rgba(255,255,255,0.8);
+  font-family: var(--font-inter), system-ui, sans-serif;
+  font-size: 0.9375rem; color: var(--text-primary);
+  outline: none;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+.form-input:focus {
+  border-color: var(--aurora-violet);
+  box-shadow: 0 0 0 3px rgba(124,58,237,0.12);
+}
+.form-label {
+  font-size: 0.8125rem; font-weight: 600;
+  letter-spacing: 0.03em; text-transform: uppercase;
+  color: var(--text-secondary); margin-bottom: 0.5rem; display: block;
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   TYPOGRAPHY HELPERS
+════════════════════════════════════════════════════════════════════════════ */
+.font-display { font-family: var(--font-playfair), Georgia, serif; }
+.font-body    { font-family: var(--font-inter), system-ui, sans-serif; }
+
+/* ════════════════════════════════════════════════════════════════════════════
+   CONTRIBUTE PAGE — split form / preview grid
+════════════════════════════════════════════════════════════════════════════ */
+/* Mobile: single column (form on top, preview below) */
+.contribute-grid {
+  grid-template-columns: 1fr;
+  gap: 2rem;
+}
+/* Desktop: 55% form / 45% sticky preview */
+@media (min-width: 860px) {
+  .contribute-grid {
+    grid-template-columns: 55fr 45fr;
+    gap: 3rem;
+  }
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   ACCESSIBILITY — respect prefers-reduced-motion
+   (Must come last to override everything above)
+════════════════════════════════════════════════════════════════════════════ */
+@media (prefers-reduced-motion: reduce) {
+  .hero-reveal,
+  .hero-float,
+  .aura-a, .aura-b, .aura-c, .aura-d,
+  .scroll-sweep {
+    animation: none !important;
+    /* Snap to final state so content is still visible */
+    opacity: 1 !important;
+    transform: none !important;
+    filter: none !important;
+  }
+  .fi-hidden {
+    transition: none !important;
+  }
 }
