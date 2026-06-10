@@ -1,13 +1,23 @@
 import { createClient } from "@supabase/supabase-js";
 
+function requireEnv(name: string): string {
+  const value = process.env[name];
+  if (!value) {
+    // Logged server-side so it shows up in Vercel Function logs
+    console.error(`[supabase/server] Missing required environment variable: ${name}`);
+    throw new Error(`Server misconfiguration: ${name} is not set.`);
+  }
+  return value;
+}
+
 /**
  * Anon client — subject to RLS policies.
  * Use for: reading approved cards, submitting new cards, uploading photos.
  */
 export function createAnonClient() {
   return createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+    requireEnv("NEXT_PUBLIC_SUPABASE_URL"),
+    requireEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY")
   );
 }
 
@@ -18,7 +28,7 @@ export function createAnonClient() {
  */
 export function createAdminClient() {
   return createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!
+    requireEnv("NEXT_PUBLIC_SUPABASE_URL"),
+    requireEnv("SUPABASE_SERVICE_ROLE_KEY")
   );
 }
