@@ -51,8 +51,9 @@ interface FriendCardProps {
 }
 
 export default function FriendCard({ card, index }: FriendCardProps) {
-  const hasSinglePhoto   = card.photo_urls.length === 1;
-  const hasMultiplePhotos = card.photo_urls.length > 1;
+  const photoUrls = Array.isArray(card.photo_urls) ? card.photo_urls : [];
+  const hasSinglePhoto   = photoUrls.length === 1;
+  const hasMultiplePhotos = photoUrls.length > 1;
   const photoRight = index % 2 === 0;
   const theme = getTheme(card.theme);
 
@@ -99,14 +100,14 @@ export default function FriendCard({ card, index }: FriendCardProps) {
         {/* Single photo */}
         {hasSinglePhoto && (
           <div className="card-photo-side">
-            <Photo src={card.photo_urls[0]} alt={card.name} />
+            <Photo src={photoUrls[0]} alt={card.name} />
           </div>
         )}
       </div>
 
       {/* ── Multiple photos ──────────────────────────────── */}
       {hasMultiplePhotos && (
-        <PhotoStrip urls={card.photo_urls} name={card.name} />
+        <PhotoStrip urls={photoUrls} name={card.name} />
       )}
 
       {/* ── Spotify embed (always visible, no toggle) ───── */}

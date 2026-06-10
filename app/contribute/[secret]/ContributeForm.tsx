@@ -301,9 +301,8 @@ export default function ContributeForm({ recipientName }: { recipientName: strin
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  if (state && "success" in state) return <SuccessView />;
-
   // ── Upload a single compressed file to Supabase Storage via signed URL ─────
+  // Must be declared before any early returns to satisfy Rules of Hooks.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const uploadFile = useCallback(async (file: File) => {
     try {
@@ -340,6 +339,8 @@ export default function ContributeForm({ recipientName }: { recipientName: strin
       setPhoto((prev) => prev ? { ...prev, status: "error", errorMsg } : prev);
     }
   }, []);
+
+  if (state && "success" in state) return <SuccessView />;
 
   const handlePhoto = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -385,7 +386,12 @@ export default function ContributeForm({ recipientName }: { recipientName: strin
           fileToUpload = new File([file], file.name, { type: mime });
         }
       }
-      await uploadFile(fileToUpload);
+      try {
+        await uploadFile(fileToUpload);
+      } catch (uploadErr) {
+        console.error("[ContributeForm] Unexpected upload error:", uploadErr);
+        setPhoto((prev) => prev ? { ...prev, status: "error", errorMsg: "Upload failed — please try again." } : prev);
+      }
     })();
   };
 
