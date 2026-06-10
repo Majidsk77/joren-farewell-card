@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useEffect, useRef, useState } from "react";
+import { useActionState, useCallback, useEffect, useRef, useState } from "react";
 import { useFormStatus } from "react-dom";
 import { submitCard, type ActionState } from "@/app/actions/cards";
 import { THEMES, type ThemeKey } from "@/lib/themes";
@@ -29,6 +29,19 @@ const ALLOWED_TYPES = new Set([
   "image/gif", "image/heic", "image/heif",
 ]);
 
+// Bug A fix: browsers (Chrome/Firefox on Windows, some Android) set file.type=""
+// for HEIC and occasionally other formats. Fall back to extension when type is absent.
+function inferMimeType(file: File): string {
+  if (file.type) return file.type;
+  const ext = file.name.split(".").pop()?.toLowerCase() ?? "";
+  const map: Record<string, string> = {
+    jpg: "image/jpeg", jpeg: "image/jpeg",
+    png: "image/png",  webp: "image/webp",
+    gif: "image/gif",  heic: "image/heic", heif: "image/heif",
+  };
+  return map[ext] ?? "";
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Per-photo thumbnail with status overlay and remove button
 // ─────────────────────────────────────────────────────────────────────────────
@@ -41,29 +54,26 @@ function PhotoTile({ entry, onRemove }: { entry: PhotoEntry; onRemove: () => voi
         alt="Photo preview"
         style={{
           width: "100%", height: "100%",
-          objectFit: "cover",
-          borderRadius: 8,
-          display: "block",
+          objectFit: "cover", borderRadius: 8, display: "block",
           opacity: entry.status === "uploading" ? 0.5 : 1,
           transition: "opacity 0.2s",
         }}
       />
 
-      {/* Status overlay */}
+      {/* Status badges */}
       {entry.status === "uploading" && (
         <div style={{
           position: "absolute", inset: 0,
           display: "flex", alignItems: "center", justifyContent: "center",
           borderRadius: 8,
         }}>
-          <span style={{ fontSize: 18, animation: "spin 1s linear infinite" }}>⏳</span>
+          <span style={{ fontSize: 18 }}>⏳</span>
         </div>
       )}
       {entry.status === "done" && (
         <div style={{
           position: "absolute", bottom: 4, left: 4,
-          background: "#16a34a",
-          borderRadius: "50%",
+          background: "#16a34a", borderRadius: "50%",
           width: 18, height: 18,
           display: "flex", alignItems: "center", justifyContent: "center",
         }}>
@@ -71,16 +81,12 @@ function PhotoTile({ entry, onRemove }: { entry: PhotoEntry; onRemove: () => voi
         </div>
       )}
       {entry.status === "error" && (
-        <div
-          title={entry.errorMsg ?? "Upload failed"}
-          style={{
-            position: "absolute", bottom: 4, left: 4,
-            background: "#dc2626",
-            borderRadius: "50%",
-            width: 18, height: 18,
-            display: "flex", alignItems: "center", justifyContent: "center",
-          }}
-        >
+        <div title={entry.errorMsg ?? "Upload failed"} style={{
+          position: "absolute", bottom: 4, left: 4,
+          background: "#dc2626", borderRadius: "50%",
+          width: 18, height: 18,
+          display: "flex", alignItems: "center", justifyContent: "center",
+        }}>
           <span style={{ color: "#fff", fontSize: 10, lineHeight: 1 }}>✗</span>
         </div>
       )}
@@ -92,14 +98,9 @@ function PhotoTile({ entry, onRemove }: { entry: PhotoEntry; onRemove: () => voi
         onClick={onRemove}
         style={{
           position: "absolute", top: -6, right: -6,
-          width: 20, height: 20,
-          borderRadius: "50%",
-          border: "none",
-          background: "#111",
-          color: "#fff",
-          fontSize: 11,
-          fontWeight: 700,
-          lineHeight: 1,
+          width: 20, height: 20, borderRadius: "50%",
+          border: "none", background: "#111", color: "#fff",
+          fontSize: 11, fontWeight: 700, lineHeight: 1,
           cursor: "pointer",
           display: "flex", alignItems: "center", justifyContent: "center",
           boxShadow: "0 1px 4px rgba(0,0,0,0.3)",
@@ -122,15 +123,10 @@ function SubmitButton({ blocked }: { blocked?: boolean }) {
       type="submit"
       disabled={disabled}
       style={{
-        width: "100%",
-        padding: "0.9rem",
-        borderRadius: 14,
-        border: "none",
-        cursor: disabled ? "not-allowed" : "pointer",
+        width: "100%", padding: "0.9rem", borderRadius: 14,
+        border: "none", cursor: disabled ? "not-allowed" : "pointer",
         fontFamily: "var(--font-inter), system-ui, sans-serif",
-        fontSize: "0.9375rem",
-        fontWeight: 600,
-        letterSpacing: "0.01em",
+        fontSize: "0.9375rem", fontWeight: 600, letterSpacing: "0.01em",
         color: "#fff",
         background: disabled
           ? "rgba(124,58,237,0.4)"
@@ -266,7 +262,7 @@ export default function ContributeForm({ recipientName }: { recipientName: strin
   const uploadedUrls  = photos.filter((p) => p.status === "done").map((p) => p.publicUrl!);
   const hasErrors     = photos.some((p) => p.status === "error");
 
-  // Revoke object URLs when entries are removed or on unmount
+  // Revoke all object URLs on unmount
   useEffect(() => {
     return () => { photos.forEach((p) => URL.revokeObjectURL(p.preview)); };
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -274,32 +270,22 @@ export default function ContributeForm({ recipientName }: { recipientName: strin
 
   if (state && "success" in state) return <SuccessView />;
 
-  // Upload a single photo entry to Supabase Storage via signed URL
-  async function uploadOne(entry: PhotoEntry, file: File) {
+  // ── Step 1: network upload for one already-compressed file ─────────────────
+  // Stable reference (useCallback with empty deps) — only uses the stable
+  // setPhotos setter, so no stale-closure risk across re-renders.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const uploadFile = useCallback(async (entry: PhotoEntry, file: File) => {
     try {
-      // Compress before upload — smaller payload, faster for iPhone HEIC/large JPEGs.
-      // If compression fails for any reason, fall back to the original file silently.
-      let fileToUpload = file;
-      try {
-        fileToUpload = await compressImage(file);
-        console.log(
-          `[ContributeForm] Compressed "${file.name}": ` +
-          `${(file.size / 1024).toFixed(0)} KB → ${(fileToUpload.size / 1024).toFixed(0)} KB (${fileToUpload.type})`
-        );
-      } catch (compressErr) {
-        console.warn(`[ContributeForm] Compression failed for "${file.name}", uploading original:`, compressErr);
-      }
-
       const res = await fetch("/api/upload-photo", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ filename: fileToUpload.name, contentType: fileToUpload.type }),
+        body: JSON.stringify({ filename: file.name, contentType: file.type }),
       });
 
       if (!res.ok) {
         const body = await res.json().catch(() => ({})) as { error?: string };
         const msg = body.error ?? `Server error ${res.status}`;
-        console.error(`[ContributeForm] /api/upload-photo failed for "${fileToUpload.name}":`, msg);
+        console.error(`[ContributeForm] /api/upload-photo failed for "${file.name}":`, msg);
         throw new Error(msg);
       }
 
@@ -307,16 +293,16 @@ export default function ContributeForm({ recipientName }: { recipientName: strin
 
       const put = await fetch(signedUrl, {
         method: "PUT",
-        headers: { "Content-Type": fileToUpload.type },
-        body: fileToUpload,
+        headers: { "Content-Type": file.type },
+        body: file,
       });
 
       if (!put.ok) {
-        const msg = `Storage PUT failed (HTTP ${put.status})`;
-        console.error(`[ContributeForm] Storage PUT failed for "${fileToUpload.name}":`, put.status, put.statusText);
-        throw new Error(msg);
+        console.error(`[ContributeForm] Storage PUT failed for "${file.name}":`, put.status, put.statusText);
+        throw new Error(`Storage PUT failed (HTTP ${put.status})`);
       }
 
+      // Functional updater — reads latest state, updates only this entry by ID
       setPhotos((prev) =>
         prev.map((p) => p.id === entry.id ? { ...p, status: "done", publicUrl } : p)
       );
@@ -327,17 +313,21 @@ export default function ContributeForm({ recipientName }: { recipientName: strin
         prev.map((p) => p.id === entry.id ? { ...p, status: "error", errorMsg } : p)
       );
     }
-  }
+  }, []); // setPhotos is stable; no other deps needed
 
   const handlePhotos = (e: React.ChangeEvent<HTMLInputElement>) => {
     const MAX_BYTES = MAX_MB * 1024 * 1024;
     const incoming  = Array.from(e.target.files ?? []);
+    e.target.value  = ""; // reset so the same file can be re-selected after removal
 
     const accepted: File[] = [];
     const skipped: string[] = [];
 
     for (const f of incoming) {
-      if (!ALLOWED_TYPES.has(f.type)) {
+      // Bug A fix: infer MIME type from extension when browser reports "" (HEIC on Windows/Android)
+      const mime = inferMimeType(f);
+
+      if (!ALLOWED_TYPES.has(mime)) {
         skipped.push(`${f.name} (not a supported image type)`);
         continue;
       }
@@ -353,25 +343,58 @@ export default function ContributeForm({ recipientName }: { recipientName: strin
     }
 
     setPhotoWarning(skipped.length > 0 ? `Skipped: ${skipped.join(", ")}` : null);
-
     if (accepted.length === 0) return;
 
-    // Create entries immediately so thumbnails appear before upload completes
+    // Create all entries immediately so thumbnails appear before any upload/compression starts.
+    // Use crypto.randomUUID() — guaranteed unique, unlike Date.now()+Math.random().
     const newEntries: PhotoEntry[] = accepted.map((f) => ({
-      id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      id: crypto.randomUUID(),
       preview: URL.createObjectURL(f),
-      status: "uploading",
+      status: "uploading" as PhotoStatus,
       publicUrl: null,
       errorMsg: null,
     }));
 
     setPhotos((prev) => [...prev, ...newEntries]);
 
-    // Kick off all uploads concurrently
-    accepted.forEach((file, i) => uploadOne(newEntries[i], file));
+    // Bug B fix: compress photos ONE AT A TIME to avoid holding multiple large
+    // canvases in memory simultaneously (5 × 12-MP photo ≈ 240 MB on mobile).
+    // After each compression completes, immediately fire the network upload
+    // without awaiting it — so all uploads run concurrently while compression
+    // continues sequentially.
+    void (async () => {
+      for (let i = 0; i < accepted.length; i++) {
+        const file  = accepted[i];
+        const entry = newEntries[i];
 
-    // Reset input so the same file can be re-selected after removal
-    e.target.value = "";
+        let fileToUpload = file;
+        try {
+          // Re-create file with inferred type if browser left it empty,
+          // so compressImage and the API receive a known MIME type.
+          const mime = inferMimeType(file);
+          const normalised = mime !== file.type
+            ? new File([file], file.name, { type: mime })
+            : file;
+
+          fileToUpload = await compressImage(normalised);
+          console.log(
+            `[ContributeForm] Compressed "${file.name}": ` +
+            `${(file.size / 1024).toFixed(0)} KB → ${(fileToUpload.size / 1024).toFixed(0)} KB (${fileToUpload.type})`
+          );
+        } catch (compressErr) {
+          console.warn(`[ContributeForm] Compression failed for "${file.name}", uploading original:`, compressErr);
+          // Ensure the fallback file has a known type for the API route
+          const mime = inferMimeType(file);
+          if (mime && mime !== file.type) {
+            fileToUpload = new File([file], file.name, { type: mime });
+          }
+        }
+
+        // Fire network upload — don't await so the next compression can start
+        // while this upload is in flight (optimal: sequential CPU, concurrent I/O).
+        void uploadFile(entry, fileToUpload);
+      }
+    })();
   };
 
   const removePhoto = (id: string) => {
@@ -391,7 +414,11 @@ export default function ContributeForm({ recipientName }: { recipientName: strin
     setInvalid(!embed);
   };
 
-  const canPreview = name.trim().length > 0 && message.trim().length > 0;
+  const canPreview  = name.trim().length > 0 && message.trim().length > 0;
+  const canAddMore  = photos.length < MAX_PHOTOS;
+
+  const uploadingCount = photos.filter((p) => p.status === "uploading").length;
+  const errorCount     = photos.filter((p) => p.status === "error").length;
 
   const handlePreviewClick = () => {
     if (!canPreview) return;
@@ -400,8 +427,6 @@ export default function ContributeForm({ recipientName }: { recipientName: strin
       previewRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
     }, 50);
   };
-
-  const canAddMore = photos.length < MAX_PHOTOS;
 
   return (
     <div style={{ display: "grid", alignItems: "start" }} className="contribute-grid">
@@ -413,6 +438,8 @@ export default function ContributeForm({ recipientName }: { recipientName: strin
         action={formAction}
         style={{ display: "flex", flexDirection: "column", gap: "1.75rem" }}
       >
+        {/* Hidden fields — photo_urls carries the JSON-encoded array of
+            pre-uploaded Supabase public URLs. File bytes are never in FormData. */}
         <input type="hidden" name="theme" value={theme} />
         <input type="hidden" name="photo_urls" value={JSON.stringify(uploadedUrls)} />
 
@@ -491,7 +518,7 @@ export default function ContributeForm({ recipientName }: { recipientName: strin
           </div>
         </div>
 
-        {/* Photos */}
+        {/* ── Photos ─────────────────────────────────────── */}
         <div>
           <Label>
             Photos{" "}
@@ -500,7 +527,7 @@ export default function ContributeForm({ recipientName }: { recipientName: strin
             </span>
           </Label>
 
-          {/* Choose button — hidden once limit reached */}
+          {/* File picker — hidden once limit reached */}
           {canAddMore && (
             <label style={{
               display: "inline-flex", alignItems: "center", gap: "0.5rem",
@@ -511,6 +538,7 @@ export default function ContributeForm({ recipientName }: { recipientName: strin
               marginTop: "0.25rem",
             }}>
               📷 {photos.length === 0 ? "Choose photos" : `Add more (${MAX_PHOTOS - photos.length} left)`}
+              {/* No name attr — file bytes must NOT enter FormData (body size limit) */}
               <input
                 type="file"
                 multiple
@@ -521,7 +549,7 @@ export default function ContributeForm({ recipientName }: { recipientName: strin
             </label>
           )}
 
-          {/* Warning for skipped files */}
+          {/* Skipped-file warning */}
           {photoWarning && (
             <p style={{
               fontSize: "0.75rem", color: "#b45309",
@@ -532,7 +560,7 @@ export default function ContributeForm({ recipientName }: { recipientName: strin
             </p>
           )}
 
-          {/* Per-photo thumbnails */}
+          {/* Thumbnails — one tile per photo with its own status badge */}
           {photos.length > 0 && (
             <div style={{ display: "flex", flexWrap: "wrap", gap: "0.9rem", marginTop: "0.875rem" }}>
               {photos.map((entry) => (
@@ -541,14 +569,16 @@ export default function ContributeForm({ recipientName }: { recipientName: strin
             </div>
           )}
 
-          {/* Upload status summary */}
+          {/* Overall status summary */}
           {photos.length > 0 && (
-            <p style={{ fontSize: "0.75rem", marginTop: "0.6rem",
-              color: isUploading ? "#6366f1" : hasErrors ? "#be123c" : "#16a34a" }}>
+            <p style={{
+              fontSize: "0.75rem", marginTop: "0.6rem",
+              color: isUploading ? "#6366f1" : hasErrors ? "#be123c" : "#16a34a",
+            }}>
               {isUploading
-                ? `⏳ Uploading ${photos.filter((p) => p.status === "uploading").length} photo${photos.filter((p) => p.status === "uploading").length > 1 ? "s" : ""}…`
+                ? `⏳ Uploading ${uploadingCount} photo${uploadingCount > 1 ? "s" : ""}…`
                 : hasErrors
-                  ? `✗ ${photos.filter((p) => p.status === "error").length} photo${photos.filter((p) => p.status === "error").length > 1 ? "s" : ""} failed — remove and try again`
+                  ? `✗ ${errorCount} photo${errorCount > 1 ? "s" : ""} failed — remove and try again`
                   : `✓ ${uploadedUrls.length} photo${uploadedUrls.length > 1 ? "s" : ""} ready`}
             </p>
           )}
