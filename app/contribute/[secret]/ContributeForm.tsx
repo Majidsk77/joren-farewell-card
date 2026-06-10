@@ -10,27 +10,25 @@ import FriendCard from "@/app/components/FriendCard";
 import type { Card } from "@/lib/supabase/types";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Per-photo upload entry
+// Single-photo upload state
 // ─────────────────────────────────────────────────────────────────────────────
-type PhotoStatus = "uploading" | "done" | "error";
+type UploadStatus = "uploading" | "done" | "error";
 
-interface PhotoEntry {
-  id: string;
-  preview: string;   // object URL for immediate display
-  status: PhotoStatus;
+interface PhotoState {
+  preview: string;       // object URL — shown immediately, before upload finishes
+  status: UploadStatus;
   publicUrl: string | null;
   errorMsg: string | null;
 }
 
-const MAX_PHOTOS = 5;
 const MAX_MB = 10;
 const ALLOWED_TYPES = new Set([
   "image/jpeg", "image/png", "image/webp",
   "image/gif", "image/heic", "image/heif",
 ]);
 
-// Bug A fix: browsers (Chrome/Firefox on Windows, some Android) set file.type=""
-// for HEIC and occasionally other formats. Fall back to extension when type is absent.
+// Browsers on Windows / some Android report file.type="" for HEIC and occasionally JPEG.
+// Fall back to the file extension so valid images are never silently rejected.
 function inferMimeType(file: File): string {
   if (file.type) return file.type;
   const ext = file.name.split(".").pop()?.toLowerCase() ?? "";
@@ -43,77 +41,110 @@ function inferMimeType(file: File): string {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Per-photo thumbnail with status overlay and remove button
+// Photo preview tile — thumbnail + status badge + remove/replace button
 // ─────────────────────────────────────────────────────────────────────────────
-function PhotoTile({ entry, onRemove }: { entry: PhotoEntry; onRemove: () => void }) {
+interface PhotoTileProps {
+  photo: PhotoState;
+  onRemove: () => void;
+  onReplace: () => void;
+  fileInputRef: React.RefObject<HTMLInputElement | null>;
+}
+
+function PhotoTile({ photo, onRemove, fileInputRef }: PhotoTileProps) {
   return (
-    <div style={{ position: "relative", width: 80, height: 64 }}>
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img
-        src={entry.preview}
-        alt="Photo preview"
-        style={{
-          width: "100%", height: "100%",
-          objectFit: "cover", borderRadius: 8, display: "block",
-          opacity: entry.status === "uploading" ? 0.5 : 1,
-          transition: "opacity 0.2s",
-        }}
-      />
+    <div style={{ display: "flex", alignItems: "flex-start", gap: "0.875rem", marginTop: "0.875rem" }}>
+      {/* Thumbnail */}
+      <div style={{ position: "relative", width: 80, height: 80, flexShrink: 0 }}>
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={photo.preview}
+          alt="Your photo"
+          style={{
+            width: "100%", height: "100%",
+            objectFit: "cover", borderRadius: 10, display: "block",
+            opacity: photo.status === "uploading" ? 0.5 : 1,
+            transition: "opacity 0.2s",
+          }}
+        />
 
-      {/* Status badges */}
-      {entry.status === "uploading" && (
-        <div style={{
-          position: "absolute", inset: 0,
-          display: "flex", alignItems: "center", justifyContent: "center",
-          borderRadius: 8,
-        }}>
-          <span style={{ fontSize: 18 }}>⏳</span>
-        </div>
-      )}
-      {entry.status === "done" && (
-        <div style={{
-          position: "absolute", bottom: 4, left: 4,
-          background: "#16a34a", borderRadius: "50%",
-          width: 18, height: 18,
-          display: "flex", alignItems: "center", justifyContent: "center",
-        }}>
-          <span style={{ color: "#fff", fontSize: 10, lineHeight: 1 }}>✓</span>
-        </div>
-      )}
-      {entry.status === "error" && (
-        <div title={entry.errorMsg ?? "Upload failed"} style={{
-          position: "absolute", bottom: 4, left: 4,
-          background: "#dc2626", borderRadius: "50%",
-          width: 18, height: 18,
-          display: "flex", alignItems: "center", justifyContent: "center",
-        }}>
-          <span style={{ color: "#fff", fontSize: 10, lineHeight: 1 }}>✗</span>
-        </div>
-      )}
+        {/* Status badge */}
+        {photo.status === "uploading" && (
+          <div style={{
+            position: "absolute", inset: 0,
+            display: "flex", alignItems: "center", justifyContent: "center",
+            borderRadius: 10,
+          }}>
+            <span style={{ fontSize: 20 }}>⏳</span>
+          </div>
+        )}
+        {photo.status === "done" && (
+          <div style={{
+            position: "absolute", bottom: 5, left: 5,
+            background: "#16a34a", borderRadius: "50%",
+            width: 18, height: 18,
+            display: "flex", alignItems: "center", justifyContent: "center",
+          }}>
+            <span style={{ color: "#fff", fontSize: 10, lineHeight: 1 }}>✓</span>
+          </div>
+        )}
+        {photo.status === "error" && (
+          <div title={photo.errorMsg ?? "Upload failed"} style={{
+            position: "absolute", bottom: 5, left: 5,
+            background: "#dc2626", borderRadius: "50%",
+            width: 18, height: 18,
+            display: "flex", alignItems: "center", justifyContent: "center",
+          }}>
+            <span style={{ color: "#fff", fontSize: 10, lineHeight: 1 }}>✗</span>
+          </div>
+        )}
+      </div>
 
-      {/* Remove button */}
-      <button
-        type="button"
-        aria-label="Remove photo"
-        onClick={onRemove}
-        style={{
-          position: "absolute", top: -6, right: -6,
-          width: 20, height: 20, borderRadius: "50%",
-          border: "none", background: "#111", color: "#fff",
-          fontSize: 11, fontWeight: 700, lineHeight: 1,
-          cursor: "pointer",
-          display: "flex", alignItems: "center", justifyContent: "center",
-          boxShadow: "0 1px 4px rgba(0,0,0,0.3)",
-        }}
-      >
-        ×
-      </button>
+      {/* Actions + status text */}
+      <div style={{ display: "flex", flexDirection: "column", gap: "0.4rem", paddingTop: "0.25rem" }}>
+        <p style={{
+          fontFamily: "var(--font-inter)", fontSize: "0.8125rem",
+          color: photo.status === "uploading" ? "#6366f1"
+               : photo.status === "error"     ? "#be123c"
+               : "#16a34a",
+          margin: 0,
+        }}>
+          {photo.status === "uploading" ? "Uploading…"
+         : photo.status === "error"     ? (photo.errorMsg ?? "Upload failed")
+         : "Ready"}
+        </p>
+        <div style={{ display: "flex", gap: "0.5rem" }}>
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            style={{
+              fontFamily: "var(--font-inter)", fontSize: "0.75rem",
+              color: "var(--text-secondary)", background: "none",
+              border: "1px solid rgba(0,0,0,0.12)", borderRadius: 6,
+              padding: "0.2rem 0.55rem", cursor: "pointer",
+            }}
+          >
+            Replace
+          </button>
+          <button
+            type="button"
+            onClick={onRemove}
+            style={{
+              fontFamily: "var(--font-inter)", fontSize: "0.75rem",
+              color: "#be123c", background: "none",
+              border: "1px solid #fecdd3", borderRadius: 6,
+              padding: "0.2rem 0.55rem", cursor: "pointer",
+            }}
+          >
+            Remove
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Submit button — reads pending from form context
+// Submit button
 // ─────────────────────────────────────────────────────────────────────────────
 function SubmitButton({ blocked }: { blocked?: boolean }) {
   const { pending } = useFormStatus();
@@ -134,7 +165,7 @@ function SubmitButton({ blocked }: { blocked?: boolean }) {
         transition: "opacity 0.2s, transform 0.15s",
       }}
     >
-      {pending ? "Sending…" : blocked ? "Uploading photos…" : "Submit this card →"}
+      {pending ? "Sending…" : blocked ? "Uploading photo…" : "Submit this card →"}
     </button>
   );
 }
@@ -166,18 +197,18 @@ function SuccessView() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Card preview — pixel-identical to /card via shared FriendCard component.
+// Card preview — pixel-identical to /card via shared FriendCard component
 // ─────────────────────────────────────────────────────────────────────────────
 interface PreviewProps {
   name: string;
   relationship: string;
   message: string;
   theme: ThemeKey;
-  photoPreviews: string[];
+  photoPreview: string | null;
   spotifyEmbed: string | null;
 }
 
-function CardPreview({ name, relationship, message, theme, photoPreviews, spotifyEmbed }: PreviewProps) {
+function CardPreview({ name, relationship, message, theme, photoPreview, spotifyEmbed }: PreviewProps) {
   const isEmpty = !name.trim() && !message.trim();
 
   if (isEmpty) {
@@ -212,7 +243,8 @@ function CardPreview({ name, relationship, message, theme, photoPreviews, spotif
     message: message || "",
     theme,
     spotify_url: spotifyEmbed,
-    photo_urls: photoPreviews,
+    // DB stores photo_urls as text[] — wrap single preview URL in array for FriendCard
+    photo_urls: photoPreview ? [photoPreview] : [],
     approved: false,
     created_at: "",
   };
@@ -241,40 +273,39 @@ function Label({ children }: { children: React.ReactNode }) {
 export default function ContributeForm({ recipientName }: { recipientName: string }) {
   const [state, formAction] = useActionState<ActionState, FormData>(submitCard, null);
 
-  const [name, setName]           = useState("");
-  const [relationship, setRel]    = useState("");
-  const [message, setMsg]         = useState("");
-  const [theme, setTheme]         = useState<ThemeKey>("warm");
-  const [spotifyRaw, setSpotifyRaw]  = useState("");
-  const [spotifyEmbed, setEmbed]     = useState<string | null>(null);
+  const [name, setName]        = useState("");
+  const [relationship, setRel] = useState("");
+  const [message, setMsg]      = useState("");
+  const [theme, setTheme]      = useState<ThemeKey>("warm");
+  const [spotifyRaw, setSpotifyRaw] = useState("");
+  const [spotifyEmbed, setEmbed]    = useState<string | null>(null);
   const [spotifyInvalid, setInvalid] = useState(false);
 
   const [hasPreviewed, setHasPreviewed] = useState(false);
-  const previewRef = useRef<HTMLDivElement>(null);
+  const previewRef  = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Per-photo state — single source of truth for previews, upload status, and public URLs
-  const [photos, setPhotos] = useState<PhotoEntry[]>([]);
-  const [photoWarning, setPhotoWarning] = useState<string | null>(null);
+  // Single-photo state — null means no photo selected
+  const [photo, setPhoto]           = useState<PhotoState | null>(null);
+  const [photoWarning, setWarning]  = useState<string | null>(null);
 
-  // Derived values
-  const isUploading   = photos.some((p) => p.status === "uploading");
-  const photoPreviews = photos.map((p) => p.preview);
-  const uploadedUrls  = photos.filter((p) => p.status === "done").map((p) => p.publicUrl!);
-  const hasErrors     = photos.some((p) => p.status === "error");
+  // Derived
+  const isUploading  = photo?.status === "uploading";
+  const uploadedUrl  = photo?.status === "done" ? photo.publicUrl! : null;
+  // Sent to the server action as a JSON-encoded array (DB field is text[])
+  const photoUrlsJson = JSON.stringify(uploadedUrl ? [uploadedUrl] : []);
 
-  // Revoke all object URLs on unmount
+  // Revoke object URL when photo is replaced or removed
   useEffect(() => {
-    return () => { photos.forEach((p) => URL.revokeObjectURL(p.preview)); };
+    return () => { if (photo?.preview) URL.revokeObjectURL(photo.preview); };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   if (state && "success" in state) return <SuccessView />;
 
-  // ── Step 1: network upload for one already-compressed file ─────────────────
-  // Stable reference (useCallback with empty deps) — only uses the stable
-  // setPhotos setter, so no stale-closure risk across re-renders.
+  // ── Upload a single compressed file to Supabase Storage via signed URL ─────
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const uploadFile = useCallback(async (entry: PhotoEntry, file: File) => {
+  const uploadFile = useCallback(async (file: File) => {
     try {
       const res = await fetch("/api/upload-photo", {
         method: "POST",
@@ -299,110 +330,69 @@ export default function ContributeForm({ recipientName }: { recipientName: strin
 
       if (!put.ok) {
         console.error(`[ContributeForm] Storage PUT failed for "${file.name}":`, put.status, put.statusText);
-        throw new Error(`Storage PUT failed (HTTP ${put.status})`);
+        throw new Error(`Storage upload failed (HTTP ${put.status})`);
       }
 
-      // Functional updater — reads latest state, updates only this entry by ID
-      setPhotos((prev) =>
-        prev.map((p) => p.id === entry.id ? { ...p, status: "done", publicUrl } : p)
-      );
+      setPhoto((prev) => prev ? { ...prev, status: "done", publicUrl } : prev);
     } catch (err) {
-      const errorMsg = err instanceof Error ? err.message : "Upload failed";
+      const errorMsg = err instanceof Error ? err.message : "Upload failed — please try again.";
       console.error(`[ContributeForm] Upload error for "${file.name}":`, err);
-      setPhotos((prev) =>
-        prev.map((p) => p.id === entry.id ? { ...p, status: "error", errorMsg } : p)
-      );
+      setPhoto((prev) => prev ? { ...prev, status: "error", errorMsg } : prev);
     }
-  }, []); // setPhotos is stable; no other deps needed
+  }, []);
 
-  const handlePhotos = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handlePhoto = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = ""; // reset so the same file can be re-selected after removal
+
+    if (!file) return;
+
+    const mime = inferMimeType(file);
     const MAX_BYTES = MAX_MB * 1024 * 1024;
-    const incoming  = Array.from(e.target.files ?? []);
-    e.target.value  = ""; // reset so the same file can be re-selected after removal
 
-    const accepted: File[] = [];
-    const skipped: string[] = [];
-
-    for (const f of incoming) {
-      // Bug A fix: infer MIME type from extension when browser reports "" (HEIC on Windows/Android)
-      const mime = inferMimeType(f);
-
-      if (!ALLOWED_TYPES.has(mime)) {
-        skipped.push(`${f.name} (not a supported image type)`);
-        continue;
-      }
-      if (f.size > MAX_BYTES) {
-        skipped.push(`${f.name} (${(f.size / 1024 / 1024).toFixed(1)} MB — max ${MAX_MB} MB)`);
-        continue;
-      }
-      if (photos.length + accepted.length >= MAX_PHOTOS) {
-        skipped.push(`${f.name} (max ${MAX_PHOTOS} photos)`);
-        continue;
-      }
-      accepted.push(f);
+    if (!ALLOWED_TYPES.has(mime)) {
+      setWarning(`"${file.name}" isn't a supported image type. Try a JPEG, PNG, or WebP.`);
+      return;
     }
+    if (file.size > MAX_BYTES) {
+      setWarning(`"${file.name}" is ${(file.size / 1024 / 1024).toFixed(1)} MB — please choose an image under ${MAX_MB} MB.`);
+      return;
+    }
+    setWarning(null);
 
-    setPhotoWarning(skipped.length > 0 ? `Skipped: ${skipped.join(", ")}` : null);
-    if (accepted.length === 0) return;
+    // Revoke previous object URL to avoid memory leak
+    if (photo?.preview) URL.revokeObjectURL(photo.preview);
 
-    // Create all entries immediately so thumbnails appear before any upload/compression starts.
-    // Use crypto.randomUUID() — guaranteed unique, unlike Date.now()+Math.random().
-    const newEntries: PhotoEntry[] = accepted.map((f) => ({
-      id: crypto.randomUUID(),
-      preview: URL.createObjectURL(f),
-      status: "uploading" as PhotoStatus,
-      publicUrl: null,
-      errorMsg: null,
-    }));
+    // Show thumbnail immediately; upload in background
+    const preview = URL.createObjectURL(file);
+    setPhoto({ preview, status: "uploading", publicUrl: null, errorMsg: null });
 
-    setPhotos((prev) => [...prev, ...newEntries]);
-
-    // Bug B fix: compress photos ONE AT A TIME to avoid holding multiple large
-    // canvases in memory simultaneously (5 × 12-MP photo ≈ 240 MB on mobile).
-    // After each compression completes, immediately fire the network upload
-    // without awaiting it — so all uploads run concurrently while compression
-    // continues sequentially.
+    // Compress, then upload
     void (async () => {
-      for (let i = 0; i < accepted.length; i++) {
-        const file  = accepted[i];
-        const entry = newEntries[i];
-
-        let fileToUpload = file;
-        try {
-          // Re-create file with inferred type if browser left it empty,
-          // so compressImage and the API receive a known MIME type.
-          const mime = inferMimeType(file);
-          const normalised = mime !== file.type
-            ? new File([file], file.name, { type: mime })
-            : file;
-
-          fileToUpload = await compressImage(normalised);
-          console.log(
-            `[ContributeForm] Compressed "${file.name}": ` +
-            `${(file.size / 1024).toFixed(0)} KB → ${(fileToUpload.size / 1024).toFixed(0)} KB (${fileToUpload.type})`
-          );
-        } catch (compressErr) {
-          console.warn(`[ContributeForm] Compression failed for "${file.name}", uploading original:`, compressErr);
-          // Ensure the fallback file has a known type for the API route
-          const mime = inferMimeType(file);
-          if (mime && mime !== file.type) {
-            fileToUpload = new File([file], file.name, { type: mime });
-          }
+      let fileToUpload = file;
+      try {
+        const normalised = mime !== file.type
+          ? new File([file], file.name, { type: mime })
+          : file;
+        fileToUpload = await compressImage(normalised);
+        console.log(
+          `[ContributeForm] Compressed "${file.name}": ` +
+          `${(file.size / 1024).toFixed(0)} KB → ${(fileToUpload.size / 1024).toFixed(0)} KB (${fileToUpload.type})`
+        );
+      } catch (compressErr) {
+        console.warn(`[ContributeForm] Compression failed for "${file.name}", uploading original:`, compressErr);
+        if (mime !== file.type) {
+          fileToUpload = new File([file], file.name, { type: mime });
         }
-
-        // Fire network upload — don't await so the next compression can start
-        // while this upload is in flight (optimal: sequential CPU, concurrent I/O).
-        void uploadFile(entry, fileToUpload);
       }
+      await uploadFile(fileToUpload);
     })();
   };
 
-  const removePhoto = (id: string) => {
-    setPhotos((prev) => {
-      const entry = prev.find((p) => p.id === id);
-      if (entry) URL.revokeObjectURL(entry.preview);
-      return prev.filter((p) => p.id !== id);
-    });
+  const removePhoto = () => {
+    if (photo?.preview) URL.revokeObjectURL(photo.preview);
+    setPhoto(null);
+    setWarning(null);
   };
 
   const handleSpotify = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -414,11 +404,7 @@ export default function ContributeForm({ recipientName }: { recipientName: strin
     setInvalid(!embed);
   };
 
-  const canPreview  = name.trim().length > 0 && message.trim().length > 0;
-  const canAddMore  = photos.length < MAX_PHOTOS;
-
-  const uploadingCount = photos.filter((p) => p.status === "uploading").length;
-  const errorCount     = photos.filter((p) => p.status === "error").length;
+  const canPreview = name.trim().length > 0 && message.trim().length > 0;
 
   const handlePreviewClick = () => {
     if (!canPreview) return;
@@ -438,10 +424,10 @@ export default function ContributeForm({ recipientName }: { recipientName: strin
         action={formAction}
         style={{ display: "flex", flexDirection: "column", gap: "1.75rem" }}
       >
-        {/* Hidden fields — photo_urls carries the JSON-encoded array of
-            pre-uploaded Supabase public URLs. File bytes are never in FormData. */}
-        <input type="hidden" name="theme" value={theme} />
-        <input type="hidden" name="photo_urls" value={JSON.stringify(uploadedUrls)} />
+        {/* photo_urls is sent as a JSON-encoded array so the DB field (text[]) stays happy.
+            File bytes never enter FormData — upload goes browser → Supabase Storage directly. */}
+        <input type="hidden" name="theme"       value={theme} />
+        <input type="hidden" name="photo_urls"  value={photoUrlsJson} />
 
         {/* Server error */}
         {state && "error" in state && (
@@ -518,38 +504,54 @@ export default function ContributeForm({ recipientName }: { recipientName: strin
           </div>
         </div>
 
-        {/* ── Photos ─────────────────────────────────────── */}
+        {/* ── Photo (single) ─────────────────────────────── */}
         <div>
           <Label>
-            Photos{" "}
+            Add a photo{" "}
             <span style={{ fontWeight: 400, textTransform: "none", letterSpacing: 0, color: "var(--text-muted)" }}>
-              (optional, up to {MAX_PHOTOS})
+              (optional)
             </span>
           </Label>
+          <p style={{ fontSize: "0.8rem", color: "var(--text-muted)", margin: "0 0 0.625rem" }}>
+            One favourite photo to go with your message.
+          </p>
 
-          {/* File picker — hidden once limit reached */}
-          {canAddMore && (
+          {/* Hidden file input — triggered by label or Replace button */}
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            onChange={handlePhoto}
+            style={{ display: "none" }}
+          />
+
+          {photo ? (
+            <PhotoTile
+              photo={photo}
+              onRemove={removePhoto}
+              onReplace={() => fileInputRef.current?.click()}
+              fileInputRef={fileInputRef}
+            />
+          ) : (
+            /* Choose button — only shown when no photo is selected */
             <label style={{
               display: "inline-flex", alignItems: "center", gap: "0.5rem",
               padding: "0.55rem 1.1rem", borderRadius: 9999,
               border: "1.5px dashed rgba(0,0,0,0.15)", cursor: "pointer",
               fontFamily: "var(--font-inter)", fontSize: "0.875rem",
               color: "var(--text-secondary)", background: "rgba(255,255,255,0.5)",
-              marginTop: "0.25rem",
             }}>
-              📷 {photos.length === 0 ? "Choose photos" : `Add more (${MAX_PHOTOS - photos.length} left)`}
-              {/* No name attr — file bytes must NOT enter FormData (body size limit) */}
+              📷 Choose a photo
+              {/* Invisible — actual input is the ref above; this label just triggers it */}
               <input
                 type="file"
-                multiple
                 accept="image/*"
-                onChange={handlePhotos}
+                onChange={handlePhoto}
                 style={{ display: "none" }}
               />
             </label>
           )}
 
-          {/* Skipped-file warning */}
           {photoWarning && (
             <p style={{
               fontSize: "0.75rem", color: "#b45309",
@@ -557,29 +559,6 @@ export default function ContributeForm({ recipientName }: { recipientName: strin
               borderRadius: 8, padding: "0.5rem 0.75rem", marginTop: "0.75rem",
             }}>
               ⚠️ {photoWarning}
-            </p>
-          )}
-
-          {/* Thumbnails — one tile per photo with its own status badge */}
-          {photos.length > 0 && (
-            <div style={{ display: "flex", flexWrap: "wrap", gap: "0.9rem", marginTop: "0.875rem" }}>
-              {photos.map((entry) => (
-                <PhotoTile key={entry.id} entry={entry} onRemove={() => removePhoto(entry.id)} />
-              ))}
-            </div>
-          )}
-
-          {/* Overall status summary */}
-          {photos.length > 0 && (
-            <p style={{
-              fontSize: "0.75rem", marginTop: "0.6rem",
-              color: isUploading ? "#6366f1" : hasErrors ? "#be123c" : "#16a34a",
-            }}>
-              {isUploading
-                ? `⏳ Uploading ${uploadingCount} photo${uploadingCount > 1 ? "s" : ""}…`
-                : hasErrors
-                  ? `✗ ${errorCount} photo${errorCount > 1 ? "s" : ""} failed — remove and try again`
-                  : `✓ ${uploadedUrls.length} photo${uploadedUrls.length > 1 ? "s" : ""} ready`}
             </p>
           )}
         </div>
@@ -688,7 +667,7 @@ export default function ContributeForm({ recipientName }: { recipientName: strin
         <CardPreview
           name={name} relationship={relationship}
           message={message} theme={theme}
-          photoPreviews={photoPreviews}
+          photoPreview={photo?.preview ?? null}
           spotifyEmbed={spotifyEmbed}
         />
 

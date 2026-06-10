@@ -59,7 +59,7 @@ export default async function ContributePage({ params }: Props) {
             color: "var(--text-muted)",
             lineHeight: 1.6,
           }}>
-            Add your note, some photos, and a song. Preview how it looks, then send it when you&apos;re happy.
+            Add your note, a photo, and a song. Preview how it looks, then send it when you&apos;re happy.
           </p>
         </div>
 
